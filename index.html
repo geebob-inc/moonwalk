@@ -2,181 +2,338 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Geebob AI 🤖</title>
-
+<title>Galaxy Battle X</title>
 <style>
-body{
-  margin:0;
-  font-family:sans-serif;
-  display:flex;
-  height:100vh;
-}
-
-.sidebar{
-  width:260px;
-  background:green;
-  color:white;
-  padding:15px;
-}
-
-.main{
-  flex:1;
-  padding:15px;
-  background:#f4f4f4;
-  display:flex;
-  flex-direction:column;
-}
-
-textarea{
-  width:100%;
-  height:80px;
-  margin-bottom:10px;
-}
-
-.chat{
-  flex:1;
-  background:white;
-  padding:10px;
-  overflow:auto;
-}
-
-.msg{
-  margin:8px 0;
-}
-
-.user{color:green;}
-.bot{color:black;}
-
-button{
-  margin:5px;
-  padding:10px;
-}
+    body {
+        margin: 0;
+        overflow: hidden;
+        background: black;
+        font-family: Arial;
+    }
+    canvas { display: block; }
+    #hud {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        color: white;
+        z-index: 10;
+        font-size: 16px;
+    }
 </style>
 </head>
-
 <body>
 
-<div class="sidebar">
-<h3>🗒 Notes</h3>
-<textarea id="note"></textarea>
-<button onclick="saveNote()">Save Note</button>
-
-<h3>🎤 Voice</h3>
-<button onclick="startVoice()">Speak</button>
-</div>
-
-<div class="main">
-
-<h2>🤖 AI Chat</h2>
-
-<div class="chat" id="chat"></div>
-
-<input id="input" placeholder="Ask AI..." />
-<button onclick="send()">Send</button>
-
-</div>
+<div id="hud"></div>
+<canvas id="c"></canvas>
 
 <script>
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
 
-let memory = localStorage.getItem("memory") || "";
+c.width = innerWidth;
+c.height = innerHeight;
 
-function addMsg(text,type){
-  const div = document.createElement("div");
-  div.className="msg "+type;
-  div.textContent=text;
-  document.getElementById("chat").appendChild(div);
-  document.getElementById("chat").scrollTop = 999999;
+// ---------------- AUDIO ----------------
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function laserSound() {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+
+    o.type = "square";
+    o.frequency.setValueAtTime(600, audioCtx.currentTime);
+
+    g.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+
+    o.connect(g);
+    g.connect(audioCtx.destination);
+
+    o.start();
+    o.stop(audioCtx.currentTime + 0.2);
 }
 
-/* =========================
-   ⚡ STREAMING TYPE EFFECT
-========================= */
-function streamText(text, callback){
-  let i = 0;
-  const div = document.createElement("div");
-  div.className="msg bot";
-  document.getElementById("chat").appendChild(div);
+function boomSound() {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
 
-  const interval = setInterval(()=>{
-    div.textContent += text[i];
-    i++;
-    if(i>=text.length){
-      clearInterval(interval);
-      callback && callback();
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(120, audioCtx.currentTime);
+
+    g.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+    o.connect(g);
+    g.connect(audioCtx.destination);
+
+    o.start();
+    o.stop(audioCtx.currentTime + 0.5);
+}
+
+// ---------------- INPUT ----------------
+let keys = {};
+addEventListener("keydown", e => keys[e.code] = true);
+addEventListener("keyup", e => keys[e.code] = false);
+
+// ---------------- PLAYER ----------------
+const player = {
+    x: c.width/2,
+    y: c.height - 120,
+    w: 30,
+    h: 40,
+    speed: 7,
+    cooldown: 0
+};
+
+let bullets = [];
+let enemies = [];
+let particles = [];
+let stars = [];
+let boss = null;
+
+let score = 0;
+let health = 100;
+
+// ---------------- PARALLAX STARS ----------------
+function initStars() {
+    for (let i = 0; i < 300; i++) {
+        stars.push({
+            x: Math.random()*c.width,
+            y: Math.random()*c.height,
+            z: Math.random()*3 + 1
+        });
     }
-  },20);
+}
+initStars();
+
+function drawStars() {
+    for (let s of stars) {
+        ctx.fillStyle = "white";
+        ctx.fillRect(s.x, s.y, s.z, s.z);
+
+        s.y += s.z * 0.5;
+        if (s.y > c.height) {
+            s.y = 0;
+            s.x = Math.random()*c.width;
+        }
+    }
 }
 
-/* =========================
-   🤖 AI CALL (CHANGE THIS URL)
-========================= */
-async function askAI(msg){
+// ---------------- PLAYER DRAW (HD STYLE) ----------------
+function drawPlayer() {
+    ctx.save();
+    ctx.translate(player.x, player.y);
 
-  const res = await fetch("https://YOUR-BACKEND/api/chat", {
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body:JSON.stringify({
-      message: msg,
-      memory: memory
-    })
-  });
+    // glow
+    ctx.shadowColor = "cyan";
+    ctx.shadowBlur = 20;
 
-  const data = await res.json();
-  return data.reply;
+    ctx.fillStyle = "#00f0ff";
+
+    ctx.beginPath();
+    ctx.moveTo(0, -25);
+    ctx.lineTo(-18, 25);
+    ctx.lineTo(0, 15);
+    ctx.lineTo(18, 25);
+    ctx.closePath();
+    ctx.fill();
+
+    // cockpit
+    ctx.fillStyle = "white";
+    ctx.fillRect(-5, -5, 10, 10);
+
+    ctx.restore();
 }
 
-/* =========================
-   SEND MESSAGE
-========================= */
-async function send(){
-  const input = document.getElementById("input");
-  const text = input.value;
-  if(!text) return;
-
-  addMsg(text,"user");
-  input.value="";
-
-  const reply = await askAI(text);
-
-  memory += "\nUser: "+text+"\nAI: "+reply;
-  localStorage.setItem("memory", memory);
-
-  streamText(reply);
+// ---------------- SHOOTING ----------------
+function shoot() {
+    if (keys["Space"] && player.cooldown <= 0) {
+        bullets.push({x: player.x, y: player.y-20, speed: 12});
+        player.cooldown = 10;
+        laserSound();
+    }
+    player.cooldown--;
 }
 
-/* =========================
-   🎤 VOICE INPUT
-========================= */
-function startVoice(){
-  const rec = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-  rec.lang = "en-US";
+// ---------------- BULLETS ----------------
+function updateBullets() {
+    ctx.fillStyle = "yellow";
 
-  rec.onresult = (e)=>{
-    document.getElementById("input").value = e.results[0][0].transcript;
-    send();
-  };
+    for (let i = bullets.length-1; i >= 0; i--) {
+        let b = bullets[i];
+        b.y -= b.speed;
 
-  rec.start();
+        ctx.fillRect(b.x, b.y, 3, 12);
+
+        if (b.y < 0) bullets.splice(i,1);
+    }
 }
 
-/* =========================
-   🔊 VOICE OUTPUT
-========================= */
-function speak(text){
-  const msg = new SpeechSynthesisUtterance(text);
-  speechSynthesis.speak(msg);
+// ---------------- ENEMIES ----------------
+function spawnEnemies() {
+    if (!boss && Math.random() < 0.03) {
+        enemies.push({
+            x: Math.random()*c.width,
+            y: -20,
+            speed: 2 + Math.random()*2,
+            r: 20
+        });
+    }
 }
 
-/* =========================
-   💾 NOTES (LOCAL CLOUD SIM)
-========================= */
-document.getElementById("note").value =
-localStorage.getItem("note") || "";
+function drawEnemies() {
+    for (let i = enemies.length-1; i >= 0; i--) {
+        let e = enemies[i];
+        e.y += e.speed;
 
-function saveNote(){
-  localStorage.setItem("note", document.getElementById("note").value);
+        ctx.fillStyle = "red";
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
+        ctx.fill();
+
+        // collision player
+        let dx = e.x - player.x;
+        let dy = e.y - player.y;
+        if (Math.sqrt(dx*dx + dy*dy) < 30) {
+            health -= 1;
+        }
+
+        // collision bullets
+        for (let j = bullets.length-1; j >= 0; j--) {
+            let b = bullets[j];
+            let dx2 = e.x - b.x;
+            let dy2 = e.y - b.y;
+
+            if (Math.sqrt(dx2*dx2 + dy2*dy2) < 25) {
+                createExplosion(e.x, e.y);
+                enemies.splice(i,1);
+                bullets.splice(j,1);
+                score += 10;
+                boomSound();
+                break;
+            }
+        }
+
+        if (e.y > c.height) enemies.splice(i,1);
+    }
 }
 
+// ---------------- EXPLOSIONS ----------------
+function createExplosion(x,y) {
+    for (let i = 0; i < 15; i++) {
+        particles.push({
+            x,y,
+            vx:(Math.random()-0.5)*5,
+            vy:(Math.random()-0.5)*5,
+            life:30
+        });
+    }
+}
+
+function drawParticles() {
+    for (let i = particles.length-1; i >= 0; i--) {
+        let p = particles[i];
+
+        ctx.fillStyle = "orange";
+        ctx.fillRect(p.x, p.y, 3,3);
+
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+
+        if (p.life <= 0) particles.splice(i,1);
+    }
+}
+
+// ---------------- BOSS ----------------
+function spawnBoss() {
+    if (score >= 200 && !boss) {
+        boss = {
+            x: c.width/2,
+            y: -100,
+            hp: 80,
+            dir: 1
+        };
+    }
+}
+
+function drawBoss() {
+    if (!boss) return;
+
+    boss.y += 1;
+    boss.x += boss.dir * 2;
+
+    if (boss.x < 100 || boss.x > c.width-100) boss.dir *= -1;
+
+    ctx.fillStyle = "#555";
+    ctx.fillRect(boss.x-100, boss.y, 200, 40);
+
+    ctx.fillStyle = "red";
+    ctx.fillRect(boss.x-30, boss.y+10, 60, 20);
+
+    // boss hit by bullets
+    for (let i = bullets.length-1; i >= 0; i--) {
+        let b = bullets[i];
+
+        if (b.x > boss.x-100 && b.x < boss.x+100 &&
+            b.y > boss.y && b.y < boss.y+40) {
+
+            boss.hp--;
+            bullets.splice(i,1);
+
+            if (boss.hp <= 0) {
+                createExplosion(boss.x, boss.y);
+                boss = null;
+                score += 500;
+            }
+        }
+    }
+}
+
+// ---------------- PLAYER MOVE ----------------
+function movePlayer() {
+    if (keys["ArrowLeft"] || keys["KeyA"]) player.x -= player.speed;
+    if (keys["ArrowRight"] || keys["KeyD"]) player.x += player.speed;
+    if (keys["ArrowUp"] || keys["KeyW"]) player.y -= player.speed;
+    if (keys["ArrowDown"] || keys["KeyS"]) player.y += player.speed;
+}
+
+// ---------------- HUD ----------------
+function drawHUD() {
+    document.getElementById("hud").innerText =
+        `Score: ${score} | Health: ${health} ${boss ? "| BOSS HP: " + boss.hp : ""}`;
+
+    if (health <= 0) {
+        ctx.fillStyle = "white";
+        ctx.font = "50px Arial";
+        ctx.fillText("GAME OVER", c.width/2 - 150, c.height/2);
+    }
+}
+
+// ---------------- LOOP ----------------
+function loop() {
+    ctx.fillStyle = "black";
+    ctx.fillRect(0,0,c.width,c.height);
+
+    drawStars();
+    movePlayer();
+    shoot();
+    drawPlayer();
+
+    updateBullets();
+    spawnEnemies();
+    drawEnemies();
+
+    spawnBoss();
+    drawBoss();
+
+    drawParticles();
+    drawHUD();
+
+    requestAnimationFrame(loop);
+}
+
+loop();
 </script>
 
 </body>
