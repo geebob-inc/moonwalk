@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Moonwalk Simulator 3D</title>
+
+<style>
+    body {
+        margin: 0;
+        overflow: hidden;
+        background: black;
+        font-family: Arial, sans-serif;
+    }
+
+    #hud {
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        color: white;
+        background: rgba(0,0,0,0.45);
+        padding: 12px;
+        border-radius: 12px;
+        z-index: 10;
+        line-height: 1.5;
+        backdrop-filter: blur(5px);
+    }
+
+    #crosshair {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 20px;
+        height: 20px;
+        margin-left: -10px;
+        margin-top: -10px;
+        z-index: 10;
+        pointer-events: none;
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+        content: "";
+        position: absolute;
+        background: white;
+    }
+
+    #crosshair::before {
+        left: 9px;
+        top: 0;
+        width: 2px;
+        height: 20px;
+    }
+
+    #crosshair::after {
+        left: 0;
+        top: 9px;
+        width: 20px;
+        height: 2px;
+    }
+
+    canvas {
+        display: block;
+    }
+</style>
+</head>
+<body>
+
+<div id="hud">
+    <b>🌕 Moonwalk Simulator</b><br>
+    Click screen to start<br><br>
+
+    WASD = Move<br>
+    Mouse = Look Around<br>
+    SPACE = Moon Jump<br>
+    SHIFT = Sprint
+</div>
+
+<div id="crosshair"></div>
+
+<script type="module">
+
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
+import { PointerLockControls } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/controls/PointerLockControls.js";
+
+// SCENE
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 20, 250);
+
+// CAMERA
+const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
+);
+
+camera.position.y = 2;
+
+// RENDERER
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// LIGHTS
+const ambient = new THREE.AmbientLight(0x888888);
+scene.add(ambient);
+
+const moonLight = new THREE.DirectionalLight(0xffffff, 1.5);
+moonLight.position.set(30, 50, 10);
+moonLight.castShadow = true;
+scene.add(moonLight);
+
+// STARS
+const starGeo = new THREE.BufferGeometry();
+const starVertices = [];
+
+for (let i = 0; i < 10000; i++) {
+    starVertices.push(
+        (Math.random() - 0.5) * 2000,
+        Math.random() * 1000,
+        (Math.random() - 0.5) * 2000
+    );
+}
+
+starGeo.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(starVertices, 3)
+);
+
+const starMat = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 1
+});
+
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+// MOON GROUND
+const groundGeo = new THREE.PlaneGeometry(500, 500, 120, 120);
+
+// deform terrain
+const pos = groundGeo.attributes.position;
+
+for (let i = 0; i < pos.count; i++) {
+    const y =
+        Math.sin(i * 0.3) * 0.8 +
+        Math.random() * 1.5;
+
+    pos.setZ(i, y);
+}
+
+groundGeo.computeVertexNormals();
+
+const groundMat = new THREE.MeshStandardMaterial({
+    color: 0x777777,
+    roughness: 1
+});
+
+const ground = new THREE.Mesh(groundGeo, groundMat);
+
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// CRATERS
+for (let i = 0; i < 120; i++) {
+
+    const craterGeo = new THREE.CylinderGeometry(
+        Math.random() * 4 + 2,
+        Math.random() * 6 + 4,
+        1,
+        32
+    );
+
+    const craterMat = new THREE.MeshStandardMaterial({
+        color: 0x666666
+    });
+
+    const crater = new THREE.Mesh(craterGeo, craterMat);
+
+    crater.position.set(
+        (Math.random() - 0.5) * 400,
+        0.2,
+        (Math.random() - 0.5) * 400
+    );
+
+    crater.rotation.x = Math.PI / 2;
+
+    scene.add(crater);
+}
+
+// ROCKS
+for (let i = 0; i < 300; i++) {
+
+    const size = Math.random() * 1.8 + 0.5;
+
+    const rockGeo = new THREE.DodecahedronGeometry(size);
+    const rockMat = new THREE.MeshStandardMaterial({
+        color: 0x888888
+    });
+
+    const rock = new THREE.Mesh(rockGeo, rockMat);
+
+    rock.position.set(
+        (Math.random() - 0.5) * 400,
+        size / 2,
+        (Math.random() - 0.5) * 400
+    );
+
+    rock.rotation.set(
+        Math.random(),
+        Math.random(),
+        Math.random()
+    );
+
+    rock.castShadow = true;
+
+    scene.add(rock);
+}
+
+// EARTH IN SKY
+const earthGeo = new THREE.SphereGeometry(10, 64, 64);
+
+const earthMat = new THREE.MeshStandardMaterial({
+    color: 0x2266ff,
+    emissive: 0x112244
+});
+
+const earth = new THREE.Mesh(earthGeo, earthMat);
+
+earth.position.set(-80, 60, -150);
+
+scene.add(earth);
+
+// CONTROLS
+const controls = new PointerLockControls(camera, document.body);
+
+document.body.addEventListener("click", () => {
+    controls.lock();
+});
+
+// MOVEMENT
+const keys = {};
+
+document.addEventListener("keydown", e => {
+    keys[e.key.toLowerCase()] = true;
+});
+
+document.addEventListener("keyup", e => {
+    keys[e.key.toLowerCase()] = false;
+});
+
+let velocityY = 0;
+let canJump = true;
+
+const clock = new THREE.Clock();
+
+// ANIMATE
+function animate() {
+
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+
+    let speed = keys["shift"] ? 22 : 12;
+
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+
+    const right = new THREE.Vector3();
+    right.crossVectors(forward, new THREE.Vector3(0,1,0));
+
+    // MOVEMENT
+    if (keys["w"])
+        controls.getObject().position.addScaledVector(forward, speed * delta);
+
+    if (keys["s"])
+        controls.getObject().position.addScaledVector(forward, -speed * delta);
+
+    if (keys["a"])
+        controls.getObject().position.addScaledVector(right, speed * delta);
+
+    if (keys["d"])
+        controls.getObject().position.addScaledVector(right, -speed * delta);
+
+    // LOW GRAVITY
+    velocityY -= 0.25 * delta;
+
+    controls.getObject().position.y += velocityY;
+
+    // GROUND COLLISION
+    if (controls.getObject().position.y < 2) {
+        velocityY = 0;
+        controls.getObject().position.y = 2;
+        canJump = true;
+    }
+
+    // JUMP
+    if (keys[" "] && canJump) {
+        velocityY = 0.12;
+        canJump = false;
+    }
+
+    // EARTH ROTATION
+    earth.rotation.y += 0.001;
+
+    renderer.render(scene, camera);
+}
+
+animate();
+
+// RESIZE
+window.addEventListener("resize", () => {
+
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+</script>
+</body>
+</html>
